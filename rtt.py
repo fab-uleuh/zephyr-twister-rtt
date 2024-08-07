@@ -4,7 +4,8 @@ import subprocess
 import time
 import os
 import psutil
-
+import signal
+import sys
 
 LOG_FILE = "/tmp/rtt_output.log"
 DEVICE = "NRF52833_XXAA"
@@ -13,6 +14,8 @@ SPEED = 4000
 CHANNEL = 0
 TIMEOUT = 5  # Timeout in seconds to detect inactivity
 
+rtt_process = None
+
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, "w"):
         pass
@@ -20,12 +23,15 @@ else:
     with open(LOG_FILE, "w") as f:
         f.truncate(0)
 
+
 def kill_existing_jlink_rtt_logger():
     for proc in psutil.process_iter(attrs=['pid', 'name']):
         if proc.info['name'] == 'JLinkRTTLoggerEx':
             proc.kill()
 
+
 time.sleep(1)
+
 def start_rtt_logger():
     command = [
         "JLinkRTTLogger",
@@ -37,6 +43,7 @@ def start_rtt_logger():
     ]
     with open(os.devnull, 'w') as devnull:
         return subprocess.Popen(command, stdout=devnull, stderr=devnull), time.time()
+
 
 def monitor_log_file(log_file, start_time, timeout):
     last_size = 0
@@ -61,8 +68,23 @@ def monitor_log_file(log_file, start_time, timeout):
         time.sleep(1)
     return False
 
-if __name__ == "__main__":
+
+def signal_handler(sig, frame):
+    if rtt_process:
+        rtt_process.terminate()
+        rtt_process.wait()
+    sys.exit(0)
+
+
+def main():
+    global rtt_process
+
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     while True:
+        kill_existing_jlink_rtt_logger()
         # Start RTT Logger
         rtt_process, start_time = start_rtt_logger()
 
@@ -70,8 +92,12 @@ if __name__ == "__main__":
             # Monitor log file for timeout
             monitor_log_file(LOG_FILE, start_time, TIMEOUT)
         except KeyboardInterrupt:
+            print("Keyboard Interrupt")
             break
         finally:
             # Terminate RTT Logger process if running
             rtt_process.terminate()
             rtt_process.wait()
+
+if __name__ == "__main__":
+    main()
